@@ -1,0 +1,145 @@
+From 61b55b358f3642c33ce08cba26d0b46e2e81aa20 Mon Sep 17 00:00:00 2001
+From: YingzuoLiu <yingzuoliu@gmail.com>
+Date: Wed, 8 Jul 2026 20:03:13 +0800
+Subject: [PATCH 1/2] Pass temporal parameters through LOCOMO OSS benchmark
+
+---
+ benchmarks/common/mem0_client.py | 13 +++++++++----
+ benchmarks/locomo/run.py         |  9 ++++++++-
+ docker/mem0/main.py              | 23 +++++++++++++++--------
+ 3 files changed, 32 insertions(+), 13 deletions(-)
+
+diff --git a/benchmarks/common/mem0_client.py b/benchmarks/common/mem0_client.py
+index 05be44c..d370186 100644
+--- a/benchmarks/common/mem0_client.py
++++ b/benchmarks/common/mem0_client.py
+@@ -245,14 +245,15 @@ class Mem0Client:
+         top_k: int = 200,
+         rerank: bool = False,
+         score_debug: bool = False,
++        reference_date: int | float | str | None = None,
+     ) -> list[dict]:
+         """Search memories. Returns list of results sorted by score descending."""
+         if self.mode == "oss":
+-            return await self._search_oss(query, user_id, top_k, rerank)
++            return await self._search_oss(query, user_id, top_k, rerank, reference_date)
+         else:
+-            return await self._search_cloud(query, user_id, top_k, rerank, score_debug)
++            return await self._search_cloud(query, user_id, top_k, rerank, score_debug, reference_date)
+ 
+-    async def _search_oss(self, query, user_id, top_k, rerank) -> list[dict]:
++    async def _search_oss(self, query, user_id, top_k, rerank, reference_date=None) -> list[dict]:
+         """Search via OSS server."""
+         session = await self._get_session()
+         payload: dict[str, Any] = {
+@@ -262,6 +263,8 @@ class Mem0Client:
+         }
+         if rerank:
+             payload["rerank"] = True
++        if reference_date is not None:
++            payload["reference_date"] = reference_date
+ 
+         for attempt in range(self.max_retries):
+             try:
+@@ -312,7 +315,7 @@ class Mem0Client:
+                     logger.error("SEARCH failed after %d attempts for user=%s", self.max_retries, user_id)
+                     return []
+ 
+-    async def _search_cloud(self, query, user_id, top_k, rerank, score_debug) -> list[dict]:
++    async def _search_cloud(self, query, user_id, top_k, rerank, score_debug, reference_date=None) -> list[dict]:
+         """Search via Mem0 cloud V3 API."""
+         session = await self._get_session()
+         payload: dict[str, Any] = {
+@@ -323,6 +326,8 @@ class Mem0Client:
+         }
+         if score_debug:
+             payload["score_debug"] = True
++        if reference_date is not None:
++            payload["reference_date"] = reference_date
+ 
+         for attempt in range(self.max_retries):
+             try:
+diff --git a/benchmarks/locomo/run.py b/benchmarks/locomo/run.py
+index 8e4bdb9..df2549a 100644
+--- a/benchmarks/locomo/run.py
++++ b/benchmarks/locomo/run.py
+@@ -413,8 +413,15 @@ async def process_question(
+     answer = str(qa["answer"])
+ 
+     # --- Search ---
++    reference_timestamp = locomo_date_to_epoch(reference_date_human) if reference_date_human else None
+     start = time.monotonic()
+-    search_results = await mem0.search(question, user_id, top_k=top_k, score_debug=score_debug)
++    search_results = await mem0.search(
++        question,
++        user_id,
++        top_k=top_k,
++        score_debug=score_debug,
++        reference_date=reference_timestamp,
++    )
+     search_latency = (time.monotonic() - start) * 1000
+ 
+     formatted, query_debug = format_search_results(search_results)
+diff --git a/docker/mem0/main.py b/docker/mem0/main.py
+index 56e3ec1..72e0e25 100644
+--- a/docker/mem0/main.py
++++ b/docker/mem0/main.py
+@@ -178,6 +178,7 @@ class AddRequest(BaseModel):
+     run_id: str | None = None
+     metadata: dict[str, Any] | None = None
+     observation_date: str | None = None
++    timestamp: int | float | str | None = None
+     custom_instructions: str | None = None
+ 
+ 
+@@ -189,6 +190,7 @@ class SearchRequest(BaseModel):
+     limit: int = Field(default=100, ge=1, le=1000)
+     filters: dict[str, Any] | None = None
+     rerank: bool = False
++    reference_date: int | float | str | None = None
+ 
+ 
+ class UpdateRequest(BaseModel):
+@@ -213,8 +215,10 @@ def add_memories(req: AddRequest):
+         params["run_id"] = req.run_id
+     if req.metadata:
+         params["metadata"] = req.metadata
+-    # observation_date and custom_instructions: pass through only if
+-    # the installed mem0ai version supports them
++    if req.timestamp is not None:
++        params["timestamp"] = req.timestamp
++    elif req.observation_date:
++        params["timestamp"] = req.observation_date
+     if req.custom_instructions:
+         params["prompt"] = req.custom_instructions
+ 
+@@ -230,17 +234,20 @@ def add_memories(req: AddRequest):
+ def search_memories(req: SearchRequest):
+     """Search memories by semantic similarity + BM25 + entity boost."""
+     mem = _get_memory()
+-    params: dict[str, Any] = {"limit": req.limit}
++    params: dict[str, Any] = {"top_k": req.limit}
++    filters: dict[str, Any] = dict(req.filters or {})
+     if req.user_id:
+-        params["user_id"] = req.user_id
++        filters["user_id"] = req.user_id
+     if req.agent_id:
+-        params["agent_id"] = req.agent_id
++        filters["agent_id"] = req.agent_id
+     if req.run_id:
+-        params["run_id"] = req.run_id
+-    if req.filters:
+-        params["filters"] = req.filters
++        filters["run_id"] = req.run_id
++    if filters:
++        params["filters"] = filters
+     if req.rerank:
+         params["rerank"] = True
++    if req.reference_date is not None:
++        params["reference_date"] = req.reference_date
+ 
+     try:
+         result = mem.search(req.query, **params)
+-- 
+2.47.1.windows.1
+

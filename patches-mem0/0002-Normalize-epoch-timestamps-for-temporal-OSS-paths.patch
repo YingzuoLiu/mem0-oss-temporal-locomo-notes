@@ -1,0 +1,73 @@
+From 94288abbe850989ecac68857a97b10b6ab047e97 Mon Sep 17 00:00:00 2001
+From: YingzuoLiu <yingzuoliu@gmail.com>
+Date: Wed, 8 Jul 2026 19:52:41 +0800
+Subject: [PATCH 2/3] Normalize epoch timestamps for temporal OSS paths
+
+---
+ mem0/memory/main.py | 44 +++++++++++++++++++++++++++++++++++++-------
+ 1 file changed, 37 insertions(+), 7 deletions(-)
+
+diff --git a/mem0/memory/main.py b/mem0/memory/main.py
+index 405b86eb..fe95e003 100644
+--- a/mem0/memory/main.py
++++ b/mem0/memory/main.py
+@@ -265,19 +265,49 @@ def _safe_deepcopy_config(config):
+             return type("Config", (), clone_dict)()
+ 
+ 
+-def _normalize_iso_timestamp_to_utc(timestamp: Optional[str]) -> Optional[str]:
+-    """Normalize timezone-aware ISO timestamps to UTC without rewriting naive values."""
+-    if not timestamp:
++def _normalize_iso_timestamp_to_utc(timestamp: Optional[Any]) -> Optional[str]:
++    """Normalize ISO-like or Unix epoch timestamps to UTC ISO strings when possible.
++
++    Naive ISO strings are preserved for backward compatibility.
++    """
++    if timestamp is None or timestamp == "":
+         return timestamp
++
++    if isinstance(timestamp, datetime):
++        parsed = timestamp
++        if parsed.tzinfo is None:
++            return parsed.isoformat()
++        return parsed.astimezone(timezone.utc).isoformat()
++
++    if isinstance(timestamp, (int, float)):
++        epoch = float(timestamp)
++        if epoch > 1_000_000_000_000:
++            epoch /= 1000.0
++        return datetime.fromtimestamp(epoch, tz=timezone.utc).isoformat()
++
++    timestamp_text = str(timestamp).strip()
++    if not timestamp_text:
++        return timestamp_text
++
+     try:
+-        parsed = datetime.fromisoformat(timestamp)
++        epoch = float(timestamp_text)
+     except ValueError:
+-        return timestamp
++        epoch = None
++
++    if epoch is not None:
++        if epoch > 1_000_000_000_000:
++            epoch /= 1000.0
++        return datetime.fromtimestamp(epoch, tz=timezone.utc).isoformat()
++
++    try:
++        parsed = datetime.fromisoformat(timestamp_text.replace("Z", "+00:00"))
++    except (TypeError, ValueError):
++        return timestamp_text
++
+     if parsed.tzinfo is None:
+-        return timestamp
++        return timestamp_text
+     return parsed.astimezone(timezone.utc).isoformat()
+ 
+-
+ def _build_filters_and_metadata(
+     *,  # Enforce keyword-only arguments
+     user_id: Optional[str] = None,
+-- 
+2.47.1.windows.1
+
