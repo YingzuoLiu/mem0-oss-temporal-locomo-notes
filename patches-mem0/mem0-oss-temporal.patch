@@ -1,5 +1,5 @@
 diff --git a/mem0/memory/main.py b/mem0/memory/main.py
-index 8cac28ca..810e352f 100644
+index 8cac28ca..a666c3d6 100644
 --- a/mem0/memory/main.py
 +++ b/mem0/memory/main.py
 @@ -2,6 +2,7 @@ import asyncio
@@ -67,7 +67,7 @@ index 8cac28ca..810e352f 100644
  def _build_filters_and_metadata(
      *,  # Enforce keyword-only arguments
      user_id: Optional[str] = None,
-@@ -379,6 +410,204 @@ def _entity_collection_name(provider: str, collection_name: str) -> str:
+@@ -379,6 +410,205 @@ def _entity_collection_name(provider: str, collection_name: str) -> str:
      return f"{collection_name}{separator}entities"
  
  
@@ -207,7 +207,8 @@ index 8cac28ca..810e352f 100644
 +        return memories
 +
 +    boosts = {}
-+    weight = 0.15 if direction in ("asc", "desc") else 0.08
++    # Keep temporal scoring as a small additive bias so semantic relevance remains dominant.
++    weight = 0.05 if direction in ("asc", "desc") else 0.025
 +
 +    if direction == "desc":
 +        if reference_dt is not None:
@@ -272,7 +273,7 @@ index 8cac28ca..810e352f 100644
  def _normalize_expiration_date(value: Any) -> Optional[str]:
      if value is None:
          return None
-@@ -741,7 +970,7 @@ class Memory(MemoryBase):
+@@ -741,7 +971,7 @@ class Memory(MemoryBase):
              agent_id (str, optional): ID of the agent creating the memory. Defaults to None.
              run_id (str, optional): ID of the run creating the memory. Defaults to None.
              metadata (dict, optional): Metadata to store with the memory. Defaults to None.
@@ -281,7 +282,7 @@ index 8cac28ca..810e352f 100644
              expiration_date (Any, optional): Date in YYYY-MM-DD format. Expired memories are hidden
                  from search and get_all unless show_expired is True.
              infer (bool, optional): If True (default), an LLM is used to extract key facts from
-@@ -766,8 +995,7 @@ class Memory(MemoryBase):
+@@ -766,8 +996,7 @@ class Memory(MemoryBase):
              LLMError: If LLM operations fail.
              DatabaseError: If database operations fail.
          """
@@ -291,7 +292,7 @@ index 8cac28ca..810e352f 100644
  
          normalized_expiration_date = _normalize_expiration_date(expiration_date)
          temporal_usage_notice = detect_temporal_usage_from_metadata(metadata)
-@@ -777,6 +1005,9 @@ class Memory(MemoryBase):
+@@ -777,6 +1006,9 @@ class Memory(MemoryBase):
              run_id=run_id,
              input_metadata=metadata,
          )
@@ -301,7 +302,7 @@ index 8cac28ca..810e352f 100644
          if normalized_expiration_date is not None:
              processed_metadata["expiration_date"] = normalized_expiration_date
  
-@@ -818,7 +1049,14 @@ class Memory(MemoryBase):
+@@ -818,7 +1050,14 @@ class Memory(MemoryBase):
          else:
              messages = parse_vision_messages(messages)
  
@@ -317,7 +318,7 @@ index 8cac28ca..810e352f 100644
          scale_threshold_notice = detect_scale_threshold_from_add_result(self, vector_store_result)
          if temporal_usage_notice:
              display_temporal_usage_notice(self, "sync", "add", *temporal_usage_notice)
-@@ -828,7 +1066,7 @@ class Memory(MemoryBase):
+@@ -828,7 +1067,7 @@ class Memory(MemoryBase):
              display_first_run_notice(self, "sync", "add")
          return {"results": vector_store_result}
  
@@ -326,7 +327,7 @@ index 8cac28ca..810e352f 100644
          if not infer:
              returned_memories = []
              for message_dict in messages:
-@@ -901,9 +1139,10 @@ class Memory(MemoryBase):
+@@ -901,9 +1140,10 @@ class Memory(MemoryBase):
              existing_memories=existing_memories,
              new_messages=parsed_messages,
              last_k_messages=last_messages,
@@ -338,7 +339,7 @@ index 8cac28ca..810e352f 100644
          try:
              response = self.llm.generate_response(
                  messages=[
-@@ -1370,7 +1609,7 @@ class Memory(MemoryBase):
+@@ -1370,7 +1610,7 @@ class Memory(MemoryBase):
              threshold (float, optional): Minimum score for a memory to be included. Defaults to 0.1.
              rerank (bool, optional): Whether to rerank results. Defaults to False.
              explain (bool, optional): Whether to include score_details for each result. Defaults to False.
@@ -347,7 +348,7 @@ index 8cac28ca..810e352f 100644
              show_expired (bool, optional): Include expired memories. Defaults to False.
  
          Returns:
-@@ -1381,8 +1620,9 @@ class Memory(MemoryBase):
+@@ -1381,8 +1621,9 @@ class Memory(MemoryBase):
              ValueError: If filters doesn't contain at least one of user_id, agent_id, run_id,
                  or if threshold/top_k values are invalid.
          """
@@ -359,7 +360,7 @@ index 8cac28ca..810e352f 100644
  
          # Reject top-level entity params - must use filters instead
          _reject_top_level_entity_params(kwargs, "search")
-@@ -1448,6 +1688,11 @@ class Memory(MemoryBase):
+@@ -1448,6 +1689,11 @@ class Memory(MemoryBase):
          )
          search_elapsed_seconds = time.perf_counter() - search_start
  
@@ -371,7 +372,7 @@ index 8cac28ca..810e352f 100644
          # Apply reranking if enabled and reranker is available
          if rerank and self.reranker and original_memories:
              try:
-@@ -2378,7 +2623,7 @@ class AsyncMemory(MemoryBase):
+@@ -2378,7 +2624,7 @@ class AsyncMemory(MemoryBase):
              agent_id (str, optional): ID of the agent creating the memory. Defaults to None.
              run_id (str, optional): ID of the run creating the memory. Defaults to None.
              metadata (dict, optional): Metadata to store with the memory. Defaults to None.
@@ -380,7 +381,7 @@ index 8cac28ca..810e352f 100644
              expiration_date (Any, optional): Date in YYYY-MM-DD format. Expired memories are hidden
                  from search and get_all unless show_expired is True.
              infer (bool, optional): Whether to infer the memories. Defaults to True.
-@@ -2389,14 +2634,16 @@ class AsyncMemory(MemoryBase):
+@@ -2389,14 +2635,16 @@ class AsyncMemory(MemoryBase):
          Returns:
              dict: A dictionary containing the result of the memory addition operation.
          """
@@ -399,7 +400,7 @@ index 8cac28ca..810e352f 100644
          if normalized_expiration_date is not None:
              processed_metadata["expiration_date"] = normalized_expiration_date
  
-@@ -2437,7 +2684,14 @@ class AsyncMemory(MemoryBase):
+@@ -2437,7 +2685,14 @@ class AsyncMemory(MemoryBase):
          else:
              messages = parse_vision_messages(messages)
  
@@ -415,7 +416,7 @@ index 8cac28ca..810e352f 100644
          scale_threshold_notice = await asyncio.to_thread(detect_scale_threshold_from_add_result, self, vector_store_result)
          if temporal_usage_notice:
              await display_temporal_usage_notice_async(self, "async", "add", *temporal_usage_notice)
-@@ -2454,6 +2708,7 @@ class AsyncMemory(MemoryBase):
+@@ -2454,6 +2709,7 @@ class AsyncMemory(MemoryBase):
          effective_filters: dict,
          infer: bool,
          prompt: Optional[str] = None,
@@ -423,7 +424,7 @@ index 8cac28ca..810e352f 100644
      ):
          if not infer:
              returned_memories = []
-@@ -2528,6 +2783,8 @@ class AsyncMemory(MemoryBase):
+@@ -2528,6 +2784,8 @@ class AsyncMemory(MemoryBase):
              existing_memories=existing_memories,
              new_messages=parsed_messages,
              last_k_messages=last_messages,
@@ -432,7 +433,7 @@ index 8cac28ca..810e352f 100644
              custom_instructions=custom_instr,
          )
  
-@@ -2993,7 +3250,7 @@ class AsyncMemory(MemoryBase):
+@@ -2993,7 +3251,7 @@ class AsyncMemory(MemoryBase):
              threshold (float, optional): Minimum score for a memory to be included. Defaults to 0.1.
              rerank (bool, optional): Whether to rerank results. Defaults to False.
              explain (bool, optional): Whether to include score_details for each result. Defaults to False.
@@ -441,7 +442,7 @@ index 8cac28ca..810e352f 100644
              show_expired (bool, optional): Include expired memories. Defaults to False.
  
          Returns:
-@@ -3004,10 +3261,9 @@ class AsyncMemory(MemoryBase):
+@@ -3004,10 +3262,9 @@ class AsyncMemory(MemoryBase):
              ValueError: If filters doesn't contain at least one of user_id, agent_id, run_id,
                  or if threshold/top_k values are invalid.
          """
@@ -455,7 +456,7 @@ index 8cac28ca..810e352f 100644
  
          # Reject top-level entity params - must use filters instead
          _reject_top_level_entity_params(kwargs, "search")
-@@ -3075,6 +3331,11 @@ class AsyncMemory(MemoryBase):
+@@ -3075,6 +3332,11 @@ class AsyncMemory(MemoryBase):
          )
          search_elapsed_seconds = time.perf_counter() - search_start
  
