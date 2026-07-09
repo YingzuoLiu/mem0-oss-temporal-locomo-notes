@@ -8,6 +8,8 @@ They are **not** official LOCOMO final answer/judge scores.
 
 They are useful for validating that the patched OSS temporal path changes retrieval behavior in the expected direction under a controlled baseline switch.
 
+The numbers were re-checked from the local returned retrieval JSON files, not from a manually typed summary table. The files are local smoke artifacts and are intentionally ignored by git because they include downloaded benchmark/runtime outputs.
+
 ## Runtime
 
 - mem0 server: patched OSS mem0, local uvicorn fallback
@@ -20,6 +22,26 @@ They are useful for validating that the patched OSS temporal path changes retrie
 - questions: first 3 questions
 - top_k: 10
 
+## Source artifact paths
+
+Baseline run:
+
+```text
+results/locomo/local_smoke/predicted_local_ollama_baseline_smoke/conv0_q0.json
+results/locomo/local_smoke/predicted_local_ollama_baseline_smoke/conv0_q1.json
+results/locomo/local_smoke/predicted_local_ollama_baseline_smoke/conv0_q2.json
+```
+
+Temporal-enhanced run:
+
+```text
+results/locomo/local_smoke/predicted_local_ollama_temporal_compare/conv0_q0.json
+results/locomo/local_smoke/predicted_local_ollama_temporal_compare/conv0_q1.json
+results/locomo/local_smoke/predicted_local_ollama_temporal_compare/conv0_q2.json
+```
+
+These files contain returned `retrieval.search_results[*].score` values. They do not include `score_details`; explain-mode temporal score breakdown was not captured in this smoke run.
+
 ## Baseline vs temporal-enhanced setup
 
 Both runs used the same local code and model stack.
@@ -31,27 +53,28 @@ The only intended behavior switch was:
 
 This avoids mixing temporal changes with model, dependency, or runtime drift.
 
-## Top-1 retrieval score comparison
+## Top-1 returned retrieval score comparison
 
-| Scope | Baseline top-1 retrieval score | Temporal-enhanced top-1 retrieval score | Delta |
+| Scope | Baseline top-1 returned retrieval score | Temporal-enhanced top-1 returned retrieval score | Delta |
 |---|---:|---:|---:|
-| Temporal questions only (`q0` + `q1`) | 0.8701 | 0.8951 | +0.0250 |
-| All 3 smoke questions | 0.8515 | 0.8682 | +0.0167 |
-| Non-temporal control (`q2`) | 0.8144 | 0.8144 | 0.0000 |
+| Temporal questions only (`q0` + `q1`) | 0.8700965 | 0.8950965 | +0.0250 |
+| All 3 smoke questions | 0.85151972 | 0.8681863867 | +0.0167 |
+| Non-temporal control (`q2`) | 0.81436616 | 0.81436616 | 0.0000 |
 
 Per-question details:
 
-| Question | Category | Baseline top-1 | Temporal-enhanced top-1 | Delta |
-|---|---|---:|---:|---:|
-| `conv0_q0`: When did Caroline go to the LGBTQ support group? | temporal | 0.9231 | 0.9481 | +0.0250 |
-| `conv0_q1`: When did Melanie paint a sunrise? | temporal | 0.8171 | 0.8421 | +0.0250 |
-| `conv0_q2`: What fields would Caroline be likely to pursue in her education? | open-domain control | 0.8144 | 0.8144 | 0.0000 |
+| Question | Category | Baseline top-1 | Temporal-enhanced top-1 | Delta | score_details |
+|---|---|---:|---:|---:|---|
+| `conv0_q0`: When did Caroline go to the LGBTQ support group? | temporal | 0.9230882 | 0.9480882 | +0.0250 | not captured |
+| `conv0_q1`: When did Melanie paint a sunrise? | temporal | 0.8171048 | 0.8421048 | +0.0250 | not captured |
+| `conv0_q2`: What fields would Caroline be likely to pursue in her education? | open-domain control | 0.81436616 | 0.81436616 | 0.0000 | not captured |
 
 Interpretation:
 
-- Temporal questions showed a positive retrieval-score shift after enabling reference-date-aware reranking.
+- Temporal questions showed a positive returned-score shift after enabling reference-date-aware reranking.
 - The non-temporal control question was unchanged.
-- This is consistent with the intended conservative behavior: temporal reranking should affect temporal-intent queries without perturbing plain semantic retrieval.
+- This is consistent with the current conservative rerank implementation: `when`-style temporal-context queries receive a small fixed additive bias for memories dated before the reference date.
+- Because `score_details` was not captured, this table should be treated as returned-score evidence, not as a full temporal-score breakdown.
 
 ## Example trace: Alice / Google / Meta
 
