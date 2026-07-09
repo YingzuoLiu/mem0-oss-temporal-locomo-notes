@@ -1,3 +1,23 @@
+diff --git a/.gitignore b/.gitignore
+index c683465..22b1ce2 100644
+--- a/.gitignore
++++ b/.gitignore
+@@ -38,3 +38,15 @@ tsconfig.tsbuildinfo
+ next-env.d.ts
+ mem0-config.yaml
+ mem0-config-*.yaml
++
++# Local LOCOMO smoke/runtime artifacts
++.env
++mem0-config-local.yaml
++datasets/locomo/
++results/locomo/local_smoke/
++docker/mem0/history-local.db
++history-local.db
++
++# Keep safe example configs tracked
++!mem0-config-local.example.yaml
++!mem0-config-docker-ollama.example.yaml
 diff --git a/benchmarks/common/mem0_client.py b/benchmarks/common/mem0_client.py
 index 05be44c..d370186 100644
 --- a/benchmarks/common/mem0_client.py
@@ -70,7 +90,7 @@ index 8e4bdb9..df2549a 100644
  
      formatted, query_debug = format_search_results(search_results)
 diff --git a/docker-compose.yml b/docker-compose.yml
-index 3d5d5ad..da57fd0 100644
+index 3d5d5ad..282b5f9 100644
 --- a/docker-compose.yml
 +++ b/docker-compose.yml
 @@ -1,7 +1,8 @@
@@ -83,6 +103,15 @@ index 3d5d5ad..da57fd0 100644
      ports:
        - "${MEM0_PORT:-8888}:8000"
      depends_on:
+@@ -26,7 +27,7 @@ services:
+       - mem0_history:/app/history
+       # Custom config for advanced setups (Azure, Ollama, SageMaker, etc.)
+       # Uncomment and point to your config file:
+-      # - ./mem0-config.yaml:/app/config.yaml:ro
++      - ./mem0-config.yaml:/app/config.yaml:ro
+     restart: unless-stopped
+     healthcheck:
+       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
 diff --git a/docker/mem0/Dockerfile b/docker/mem0/Dockerfile
 index 0a210f9..073de80 100644
 --- a/docker/mem0/Dockerfile
@@ -201,3 +230,62 @@ index 6905e88..cee1b16 100644
  spacy>=3.7.0
  pydantic>=2.10.0
  pyyaml>=6.0
+diff --git a/mem0-config-docker-ollama.example.yaml b/mem0-config-docker-ollama.example.yaml
+new file mode 100644
+index 0000000..b989279
+--- /dev/null
++++ b/mem0-config-docker-ollama.example.yaml
+@@ -0,0 +1,20 @@
++# Docker compose runtime example.
++# Copy this file to mem0-config.yaml before running docker compose:
++#   cp mem0-config-docker-ollama.example.yaml mem0-config.yaml
++version: v1.1
++
++llm:
++  provider: ollama
++  config:
++    model: llama3.2:latest
++    ollama_base_url: http://host.docker.internal:11434
++    temperature: 0.1
++
++embedder:
++  provider: ollama
++  config:
++    model: mxbai-embed-large:latest
++    ollama_base_url: http://host.docker.internal:11434
++    embedding_dims: 1024
++
++history_db_path: /app/history/history.db
+diff --git a/mem0-config-local.example.yaml b/mem0-config-local.example.yaml
+new file mode 100644
+index 0000000..c432bad
+--- /dev/null
++++ b/mem0-config-local.example.yaml
+@@ -0,0 +1,27 @@
++# Local uvicorn runtime example.
++# Use this when running docker/mem0/main.py directly on the host.
++version: v1.1
++
++llm:
++  provider: ollama
++  config:
++    model: llama3.2:latest
++    ollama_base_url: http://localhost:11434
++    temperature: 0.1
++
++embedder:
++  provider: ollama
++  config:
++    model: mxbai-embed-large:latest
++    ollama_base_url: http://localhost:11434
++    embedding_dims: 1024
++
++vector_store:
++  provider: qdrant
++  config:
++    host: localhost
++    port: 6333
++    collection_name: locomo_memories
++    embedding_model_dims: 1024
++
++history_db_path: ./history-local.db

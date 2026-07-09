@@ -1,5 +1,5 @@
 diff --git a/mem0/memory/main.py b/mem0/memory/main.py
-index 8cac28ca..a666c3d6 100644
+index 8cac28ca..4c98e2a5 100644
 --- a/mem0/memory/main.py
 +++ b/mem0/memory/main.py
 @@ -2,6 +2,7 @@ import asyncio
@@ -364,7 +364,7 @@ index 8cac28ca..a666c3d6 100644
          )
          search_elapsed_seconds = time.perf_counter() - search_start
  
-+        if normalized_reference_date is not None:
++        if normalized_reference_date is not None and os.getenv("MEM0_DISABLE_TEMPORAL_RERANK") != "1":
 +            original_memories = _apply_reference_date_temporal_rerank(
 +                query, original_memories, normalized_reference_date, explain=explain
 +            )
@@ -460,7 +460,7 @@ index 8cac28ca..a666c3d6 100644
          )
          search_elapsed_seconds = time.perf_counter() - search_start
  
-+        if normalized_reference_date is not None:
++        if normalized_reference_date is not None and os.getenv("MEM0_DISABLE_TEMPORAL_RERANK") != "1":
 +            original_memories = _apply_reference_date_temporal_rerank(
 +                query, original_memories, normalized_reference_date, explain=explain
 +            )
