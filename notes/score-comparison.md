@@ -6,7 +6,7 @@ The numbers below are retrieval-level scores from the local LOCOMO predict-only 
 
 They are **not** official LOCOMO final answer/judge scores.
 
-They are useful for validating that the patched OSS temporal path changes retrieval behavior in the expected direction under a controlled baseline switch.
+They are useful for validating that the patched OSS temporal path is wired and that returned search scores change when temporal reranking is enabled. They should **not** be interpreted as evidence of final answer quality improvement.
 
 The numbers were re-checked from the local returned retrieval JSON files, not from a manually typed summary table. The files are local smoke artifacts and are intentionally ignored by git because they include downloaded benchmark/runtime outputs.
 
@@ -46,12 +46,12 @@ These files contain returned `retrieval.search_results[*].score` values. They do
 
 Both runs used the same local code and model stack.
 
-The only intended behavior switch was:
+The intended behavior switch was:
 
 - Baseline: `MEM0_DISABLE_TEMPORAL_RERANK=1`
 - Temporal-enhanced: temporal reranking enabled
 
-This avoids mixing temporal changes with model, dependency, or runtime drift.
+Important caveat: these local LOCOMO smoke runs were produced as separate predict-only runs, so they also used separate ingestion/user IDs. Local LLM extraction can produce slightly different memory text variants across runs. Therefore, this table should be treated as a **smoke-level returned-score comparison**, not a clean controlled benchmark. A cleaner comparison should ingest once and run baseline vs temporal-enhanced search against the same stored collection/user, changing only the rerank flag at search time.
 
 ## Top-1 returned retrieval score comparison
 
@@ -71,10 +71,11 @@ Per-question details:
 
 Interpretation:
 
-- Temporal questions showed a positive returned-score shift after enabling reference-date-aware reranking.
-- The non-temporal control question was unchanged.
-- This is consistent with the current conservative rerank implementation: `when`-style temporal-context queries receive a small fixed additive bias for memories dated before the reference date.
+- The top-1 returned scores for q0/q1 increased by +0.025, which matches the current conservative temporal-context rerank weight.
+- For q0/q1, this does **not** prove that the ranking improved. In these examples, the top candidates were already dated before the reference date, so the context rerank can apply the same additive bias to all eligible candidates. A uniform additive score shift does not change relative ordering.
+- The non-temporal control question was unchanged, as expected when temporal intent is not detected.
 - Because `score_details` was not captured, this table should be treated as returned-score evidence, not as a full temporal-score breakdown.
+- The clean ranking-change evidence in this package is the manual Alice / Google / Meta smoke test below. A LOCOMO-native ranking-change example still needs to be identified or re-run with a controlled single-ingestion setup.
 
 ## Example trace: Alice / Google / Meta
 
