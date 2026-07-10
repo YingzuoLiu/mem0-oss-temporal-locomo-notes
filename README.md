@@ -1,5 +1,12 @@
 # mem0 OSS Temporal LOCOMO Notes
 
+## Latest work
+
+- v2.0.2 temporal backport + verification: see [`mem0-v2.0.2-backport-summary.md`](mem0-v2.0.2-backport-summary.md)
+- Controlled single-ingestion 152-question before/after comparison: see [`notes/controlled-search-comparison.md`](notes/controlled-search-comparison.md)
+- v2.0.2 patch files: see [`patches-mem0-v2.0.2/`](patches-mem0-v2.0.2/)
+
+
 This repository documents an experimental patch set for evaluating temporal timestamp and reference-date paths in mem0 OSS against the official `mem0ai/memory-benchmarks` LOCOMO harness.
 
 This work is for technical evaluation only.
