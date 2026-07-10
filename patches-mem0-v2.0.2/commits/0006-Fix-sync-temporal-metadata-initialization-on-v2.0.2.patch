@@ -1,0 +1,25 @@
+From 9f24a3b9a952878cb97dd86e2c2bf54d7536e653 Mon Sep 17 00:00:00 2001
+From: YingzuoLiu <yingzuoliu@gmail.com>
+Date: Fri, 10 Jul 2026 14:04:43 +0800
+Subject: [PATCH 06/10] Fix sync temporal metadata initialization on v2.0.2
+
+---
+ mem0/memory/main.py | 2 ++
+ 1 file changed, 2 insertions(+)
+
+diff --git a/mem0/memory/main.py b/mem0/memory/main.py
+index 011fb59d..34be2a78 100644
+--- a/mem0/memory/main.py
++++ b/mem0/memory/main.py
+@@ -885,6 +885,8 @@ class Memory(MemoryBase):
+             DatabaseError: If database operations fail.
+         """
+         normalized_timestamp = _normalize_iso_timestamp_to_utc(str(timestamp)) if timestamp is not None else None
++        normalized_expiration_date = _normalize_expiration_date(expiration_date)
++        temporal_usage_notice = detect_temporal_usage_from_metadata(metadata)
+ 
+         processed_metadata, effective_filters = _build_filters_and_metadata(
+             user_id=user_id,
+-- 
+2.47.1.windows.1
+

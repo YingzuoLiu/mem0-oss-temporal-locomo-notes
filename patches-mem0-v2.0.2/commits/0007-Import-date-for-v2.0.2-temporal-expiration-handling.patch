@@ -1,0 +1,25 @@
+From 60058418f26f3923f6332c36ded5164f3d3c37d5 Mon Sep 17 00:00:00 2001
+From: YingzuoLiu <yingzuoliu@gmail.com>
+Date: Fri, 10 Jul 2026 14:15:58 +0800
+Subject: [PATCH 07/10] Import date for v2.0.2 temporal expiration handling
+
+---
+ mem0/memory/main.py | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/mem0/memory/main.py b/mem0/memory/main.py
+index 34be2a78..1753981d 100644
+--- a/mem0/memory/main.py
++++ b/mem0/memory/main.py
+@@ -8,7 +8,7 @@ import os
+ import uuid
+ import warnings
+ from copy import deepcopy
+-from datetime import datetime, timezone
++from datetime import date, datetime, timezone
+ from typing import Any, Dict, Optional
+ 
+ from pydantic import ValidationError
+-- 
+2.47.1.windows.1
+

@@ -1,0 +1,46 @@
+From 1ee4d732e53256b63278532edd153de917e6ad06 Mon Sep 17 00:00:00 2001
+From: YingzuoLiu <yingzuoliu@gmail.com>
+Date: Fri, 10 Jul 2026 14:49:10 +0800
+Subject: [PATCH 09/10] Add v2.0.2 temporal notice fallback
+
+---
+ mem0/memory/main.py | 23 +++++++++++++++++++++++
+ 1 file changed, 23 insertions(+)
+
+diff --git a/mem0/memory/main.py b/mem0/memory/main.py
+index 4f7378e4..0a533acc 100644
+--- a/mem0/memory/main.py
++++ b/mem0/memory/main.py
+@@ -216,6 +216,29 @@ def _safe_deepcopy_config(config):
+             return type("Config", (), clone_dict)()
+ 
+ 
++
++def detect_temporal_usage_from_metadata(metadata):
++    """Return optional temporal usage notice metadata.
++
++    v2.0.2 does not include the newer OSS temporal notice helper that later
++    commits call from add(). For the local temporal backport/eval path, notices
++    are non-critical, so this fallback keeps add() compatible while preserving
++    timestamp/expiration behavior.
++    """
++    if not metadata:
++        return None
++
++    if isinstance(metadata, dict):
++        if metadata.get("timestamp") is not None:
++            return ("timestamp",)
++        if metadata.get("created_at") is not None:
++            return ("timestamp",)
++        if metadata.get("expiration_date") is not None:
++            return ("expiration_date",)
++
++    return None
++
++
+ def _normalize_iso_timestamp_to_utc(timestamp: Optional[Any]) -> Optional[str]:
+     """Normalize ISO-like or Unix epoch timestamps to UTC ISO strings when possible.
+ 
+-- 
+2.47.1.windows.1
+

@@ -1,0 +1,34 @@
+From f1306a65055cb7748d476edcc17569f9b494a2b4 Mon Sep 17 00:00:00 2001
+From: YingzuoLiu <yingzuoliu@gmail.com>
+Date: Thu, 9 Jul 2026 14:15:39 +0800
+Subject: [PATCH 05/10] Add switch to disable temporal rerank for baseline eval
+
+---
+ mem0/memory/main.py | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/mem0/memory/main.py b/mem0/memory/main.py
+index 6589d9e3..011fb59d 100644
+--- a/mem0/memory/main.py
++++ b/mem0/memory/main.py
+@@ -1524,7 +1524,7 @@ class Memory(MemoryBase):
+ 
+         original_memories = self._search_vector_store(query, effective_filters, limit, threshold)
+ 
+-        if normalized_reference_date is not None:
++        if normalized_reference_date is not None and os.getenv("MEM0_DISABLE_TEMPORAL_RERANK") != "1":
+             original_memories = _apply_reference_date_temporal_rerank(
+                 query, original_memories, normalized_reference_date, explain=explain
+             )
+@@ -2994,7 +2994,7 @@ class AsyncMemory(MemoryBase):
+ 
+         original_memories = await self._search_vector_store(query, effective_filters, limit, threshold)
+ 
+-        if normalized_reference_date is not None:
++        if normalized_reference_date is not None and os.getenv("MEM0_DISABLE_TEMPORAL_RERANK") != "1":
+             original_memories = _apply_reference_date_temporal_rerank(
+                 query, original_memories, normalized_reference_date, explain=explain
+             )
+-- 
+2.47.1.windows.1
+

@@ -1,0 +1,216 @@
+From 3958186b8f51dd632397c39bb3d229fda926bf15 Mon Sep 17 00:00:00 2001
+From: YingzuoLiu <yingzuoliu@gmail.com>
+Date: Wed, 8 Jul 2026 20:22:18 +0800
+Subject: [PATCH 03/10] Use additive temporal scoring for reference date search
+
+---
+ mem0/memory/main.py | 140 +++++++++++++++++++++++++++++++++++++-------
+ 1 file changed, 119 insertions(+), 21 deletions(-)
+
+diff --git a/mem0/memory/main.py b/mem0/memory/main.py
+index a8d5a2f1..49c6268c 100644
+--- a/mem0/memory/main.py
++++ b/mem0/memory/main.py
+@@ -1,6 +1,7 @@
+ import asyncio
+ import gc
+ import hashlib
++import re
+ import json
+ import logging
+ import os
+@@ -377,8 +378,28 @@ def _parse_temporal_datetime(value):
+     return parsed.astimezone(timezone.utc)
+ 
+ 
++def _contains_temporal_phrase(query: str, terms: tuple[str, ...]) -> bool:
++    """Match temporal trigger terms with word boundaries to avoid substring false positives.
++
++    For example, "now" should not match inside "known".
++    """
++    q = f" {query or ''} ".lower()
++    for term in terms:
++        pattern = r"(?<![a-z0-9])" + re.escape(term.lower()) + r"(?![a-z0-9])"
++        if re.search(pattern, q):
++            return True
++    return False
++
++
+ def _infer_temporal_rank_direction(query):
+-    """Infer whether a query is asking for latest/recent or earliest/first memories."""
++    """Infer temporal intent from a search query.
++
++    Returns:
++        "asc": earliest/first-style ordering
++        "desc": latest/recent/current-style ordering
++        "context": temporal relationship query without a clear sort direction
++        None: no obvious temporal intent
++    """
+     q = (query or "").lower()
+ 
+     earliest_terms = (
+@@ -395,22 +416,59 @@ def _infer_temporal_rank_direction(query):
+         "recent",
+         "recently",
+         "current",
++        "currently",
+         "now",
+         "last time",
+     )
++    temporal_context_terms = (
++        "before",
++        "after",
++        "when",
++        "while",
++        "during",
++        "since",
++        "until",
++        "by the time",
++        "at the time",
++        "how long",
++        "how many days",
++        "how many weeks",
++        "how many months",
++        "how many years",
++        "prior",
++        "previous",
++        "previously",
++        "earlier",
++        "later",
++        "then",
++        "date",
++        "time",
++        "moved",
++        "move",
++        "occurred",
++        "happened",
++        "started",
++        "ended",
++        "finished",
++        "began",
++    )
+ 
+-    if any(term in q for term in earliest_terms):
++    if _contains_temporal_phrase(q, earliest_terms):
+         return "asc"
+-    if any(term in q for term in latest_terms):
++    if _contains_temporal_phrase(q, latest_terms):
+         return "desc"
++    if _contains_temporal_phrase(q, temporal_context_terms):
++        return "context"
+     return None
+ 
+ 
+ def _apply_reference_date_temporal_rerank(query, memories, reference_date, explain=False):
+-    """Apply a conservative temporal rerank for explicitly temporal recency/order queries.
++    """Apply conservative additive temporal scoring for temporal queries.
+ 
+-    This does not hard-filter results. For latest/recent queries, memories at or before
+-    reference_date are preferred by recency, while future-dated memories are kept after them.
++    This does not hard-filter results. It adjusts each candidate's score using
++    the memory created_at timestamp, then sorts by the adjusted score. The goal is
++    to preserve semantic relevance while giving dated memories a small temporal
++    preference when the query has temporal intent.
+     """
+     if reference_date is None or not memories:
+         return memories
+@@ -423,41 +481,81 @@ def _apply_reference_date_temporal_rerank(query, memories, reference_date, expla
+     dated = []
+     missing = []
+ 
+-    for item in memories:
++    for idx, item in enumerate(memories):
+         created_at = item.get("created_at")
+         if created_at is None and isinstance(item.get("metadata"), dict):
+             created_at = item["metadata"].get("created_at") or item["metadata"].get("timestamp")
+         created_dt = _parse_temporal_datetime(created_at)
+ 
+         if created_dt is None:
+-            missing.append(item)
++            missing.append((idx, item))
+         else:
+-            dated.append((created_dt, item))
++            dated.append((idx, created_dt, item))
+ 
+     if not dated:
+         return memories
+ 
+-    if direction == "desc" and reference_dt is not None:
+-        before_or_equal = [(dt, item) for dt, item in dated if dt <= reference_dt]
+-        after = [(dt, item) for dt, item in dated if dt > reference_dt]
+-        before_or_equal.sort(key=lambda pair: pair[0], reverse=True)
+-        after.sort(key=lambda pair: pair[0])
+-        ordered = [item for _, item in before_or_equal] + [item for _, item in after] + missing
++    boosts = {}
++    weight = 0.15 if direction in ("asc", "desc") else 0.08
++
++    if direction == "desc":
++        if reference_dt is not None:
++            before_or_equal = [(idx, dt, item) for idx, dt, item in dated if dt <= reference_dt]
++            after = [(idx, dt, item) for idx, dt, item in dated if dt > reference_dt]
++            before_or_equal.sort(key=lambda row: row[1], reverse=True)
++            after.sort(key=lambda row: row[1])
++            ranked = before_or_equal + after
++            preferred_count = max(len(before_or_equal), 1)
++            for rank, (idx, dt, item) in enumerate(ranked):
++                if dt <= reference_dt:
++                    boosts[idx] = weight * (preferred_count - min(rank, preferred_count - 1)) / preferred_count
++                else:
++                    boosts[idx] = -weight / 2
++        else:
++            ranked = sorted(dated, key=lambda row: row[1], reverse=True)
++            total = len(ranked)
++            for rank, (idx, dt, item) in enumerate(ranked):
++                boosts[idx] = weight * (total - rank) / total
++
++    elif direction == "asc":
++        ranked = sorted(dated, key=lambda row: row[1])
++        total = len(ranked)
++        for rank, (idx, dt, item) in enumerate(ranked):
++            boosts[idx] = weight * (total - rank) / total
++
+     else:
+-        dated.sort(key=lambda pair: pair[0], reverse=(direction == "desc"))
+-        ordered = [item for _, item in dated] + missing
++        for idx, dt, item in dated:
++            if reference_dt is None or dt <= reference_dt:
++                boosts[idx] = weight
++            else:
++                boosts[idx] = -weight / 2
+ 
+-    if explain:
+-        for rank, item in enumerate(ordered):
++    adjusted = []
++    for idx, item in enumerate(memories):
++        try:
++            base_score = float(item.get("score", 0) or 0)
++        except (TypeError, ValueError):
++            base_score = 0.0
++
++        temporal_score = boosts.get(idx, 0.0)
++        adjusted_score = base_score + temporal_score
++        item["score"] = adjusted_score
++
++        if explain:
+             item.setdefault("score_details", {})
+             item["score_details"]["temporal_rerank"] = {
+-                "rank": rank,
+                 "direction": direction,
+                 "reference_date": reference_date,
+                 "created_at": item.get("created_at"),
++                "base_score": base_score,
++                "temporal_score": temporal_score,
++                "adjusted_score": adjusted_score,
+             }
+ 
+-    return ordered
++        adjusted.append(item)
++
++    adjusted.sort(key=lambda item: item.get("score", 0), reverse=True)
++    return adjusted
+ 
+ 
+ def _normalize_expiration_date(value: Any) -> Optional[str]:
+-- 
+2.47.1.windows.1
+

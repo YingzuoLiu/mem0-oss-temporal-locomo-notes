@@ -1,0 +1,30 @@
+From 2355552499d5c5d9aa9c20527a691de0eb4198cc Mon Sep 17 00:00:00 2001
+From: YingzuoLiu <yingzuoliu@gmail.com>
+Date: Fri, 10 Jul 2026 14:19:54 +0800
+Subject: [PATCH 08/10] Fix temporal rerank score details created_at
+
+---
+ mem0/memory/main.py | 7 ++++++-
+ 1 file changed, 6 insertions(+), 1 deletion(-)
+
+diff --git a/mem0/memory/main.py b/mem0/memory/main.py
+index 1753981d..4f7378e4 100644
+--- a/mem0/memory/main.py
++++ b/mem0/memory/main.py
+@@ -547,7 +547,12 @@ def _apply_reference_date_temporal_rerank(query, memories, reference_date, expla
+             item["score_details"]["temporal_rerank"] = {
+                 "direction": direction,
+                 "reference_date": reference_date,
+-                "created_at": item.get("created_at"),
++                "created_at": (
++                    (item.get("metadata") or {}).get("created_at")
++                    or (item.get("metadata") or {}).get("timestamp")
++                    or item.get("created_at")
++                    or item.get("timestamp")
++                ),
+                 "base_score": base_score,
+                 "temporal_score": temporal_score,
+                 "adjusted_score": adjusted_score,
+-- 
+2.47.1.windows.1
+

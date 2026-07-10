@@ -1,0 +1,682 @@
+diff --git a/mem0/memory/main.py b/mem0/memory/main.py
+index ec9dd202..b1e87ece 100644
+--- a/mem0/memory/main.py
++++ b/mem0/memory/main.py
+@@ -1,13 +1,14 @@
+ import asyncio
+ import gc
+ import hashlib
++import re
+ import json
+ import logging
+ import os
+ import uuid
+ import warnings
+ from copy import deepcopy
+-from datetime import datetime, timezone
++from datetime import date, datetime, timezone
+ from typing import Any, Dict, Optional
+ 
+ from pydantic import ValidationError
+@@ -215,19 +216,112 @@ def _safe_deepcopy_config(config):
+             return type("Config", (), clone_dict)()
+ 
+ 
+-def _normalize_iso_timestamp_to_utc(timestamp: Optional[str]) -> Optional[str]:
+-    """Normalize timezone-aware ISO timestamps to UTC without rewriting naive values."""
+-    if not timestamp:
++
++def detect_temporal_usage_from_metadata(metadata):
++    """Return optional temporal usage notice metadata.
++
++    v2.0.2 does not include the newer OSS temporal notice helper that later
++    commits call from add(). For the local temporal backport/eval path, notices
++    are non-critical, so this fallback keeps add() compatible while preserving
++    timestamp/expiration behavior.
++    """
++    if not metadata:
++        return None
++
++    if isinstance(metadata, dict):
++        if metadata.get("timestamp") is not None:
++            return ("timestamp",)
++        if metadata.get("created_at") is not None:
++            return ("timestamp",)
++        if metadata.get("expiration_date") is not None:
++            return ("expiration_date",)
++
++    return None
++
++
++
++# ---------------------------------------------------------------------------
++# v2.0.2 temporal backport notice fallbacks
++# ---------------------------------------------------------------------------
++
++def detect_scale_threshold_from_add_result(*args, **kwargs):
++    """No-op fallback for newer OSS notice helper absent in v2.0.2."""
++    return None
++
++
++def display_scale_threshold_notice(*args, **kwargs):
++    """No-op fallback for newer OSS notice helper absent in v2.0.2."""
++    return None
++
++
++async def display_scale_threshold_notice_async(*args, **kwargs):
++    """No-op fallback for newer OSS notice helper absent in v2.0.2."""
++    return None
++
++
++def display_first_run_notice(*args, **kwargs):
++    """No-op fallback for newer OSS notice helper absent in v2.0.2."""
++    return None
++
++
++async def display_first_run_notice_async(*args, **kwargs):
++    """No-op fallback for newer OSS notice helper absent in v2.0.2."""
++    return None
++
++
++def display_temporal_usage_notice(*args, **kwargs):
++    """No-op fallback for newer OSS notice helper absent in v2.0.2."""
++    return None
++
++
++async def display_temporal_usage_notice_async(*args, **kwargs):
++    """No-op fallback for newer OSS notice helper absent in v2.0.2."""
++    return None
++
++
++def _normalize_iso_timestamp_to_utc(timestamp: Optional[Any]) -> Optional[str]:
++    """Normalize ISO-like or Unix epoch timestamps to UTC ISO strings when possible.
++
++    Naive ISO strings are preserved for backward compatibility.
++    """
++    if timestamp is None or timestamp == "":
+         return timestamp
++
++    if isinstance(timestamp, datetime):
++        parsed = timestamp
++        if parsed.tzinfo is None:
++            return parsed.isoformat()
++        return parsed.astimezone(timezone.utc).isoformat()
++
++    if isinstance(timestamp, (int, float)):
++        epoch = float(timestamp)
++        if epoch > 1_000_000_000_000:
++            epoch /= 1000.0
++        return datetime.fromtimestamp(epoch, tz=timezone.utc).isoformat()
++
++    timestamp_text = str(timestamp).strip()
++    if not timestamp_text:
++        return timestamp_text
++
+     try:
+-        parsed = datetime.fromisoformat(timestamp)
++        epoch = float(timestamp_text)
+     except ValueError:
+-        return timestamp
++        epoch = None
++
++    if epoch is not None:
++        if epoch > 1_000_000_000_000:
++            epoch /= 1000.0
++        return datetime.fromtimestamp(epoch, tz=timezone.utc).isoformat()
++
++    try:
++        parsed = datetime.fromisoformat(timestamp_text.replace("Z", "+00:00"))
++    except (TypeError, ValueError):
++        return timestamp_text
++
+     if parsed.tzinfo is None:
+-        return timestamp
++        return timestamp_text
+     return parsed.astimezone(timezone.utc).isoformat()
+ 
+-
+ def _build_filters_and_metadata(
+     *,  # Enforce keyword-only arguments
+     user_id: Optional[str] = None,
+@@ -324,6 +418,242 @@ def _build_session_scope(filters):
+     return "&".join(parts)
+ 
+ 
++def _entity_collection_name(provider: str, collection_name: str) -> str:
++    separator = "-" if provider == "s3_vectors" else "_"
++    return f"{collection_name}{separator}entities"
++
++
++
++def _parse_temporal_datetime(value):
++    """Best-effort parse for ISO-like timestamps used in memory payloads."""
++    if value is None:
++        return None
++    if isinstance(value, datetime):
++        parsed = value
++    else:
++        try:
++            parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
++        except (TypeError, ValueError):
++            return None
++
++    if parsed.tzinfo is None:
++        return parsed.replace(tzinfo=timezone.utc)
++    return parsed.astimezone(timezone.utc)
++
++
++def _contains_temporal_phrase(query: str, terms: tuple[str, ...]) -> bool:
++    """Match temporal trigger terms with word boundaries to avoid substring false positives.
++
++    For example, "now" should not match inside "known".
++    """
++    q = f" {query or ''} ".lower()
++    for term in terms:
++        pattern = r"(?<![a-z0-9])" + re.escape(term.lower()) + r"(?![a-z0-9])"
++        if re.search(pattern, q):
++            return True
++    return False
++
++
++def _infer_temporal_rank_direction(query):
++    """Infer temporal intent from a search query.
++
++    Returns:
++        "asc": earliest/first-style ordering
++        "desc": latest/recent/current-style ordering
++        "context": temporal relationship query without a clear sort direction
++        None: no obvious temporal intent
++    """
++    q = (query or "").lower()
++
++    earliest_terms = (
++        "earliest",
++        "oldest",
++        "first",
++        "initial",
++        "originally",
++    )
++    latest_terms = (
++        "latest",
++        "newest",
++        "most recent",
++        "recent",
++        "recently",
++        "current",
++        "currently",
++        "now",
++        "last time",
++    )
++    temporal_context_terms = (
++        "before",
++        "after",
++        "when",
++        "while",
++        "during",
++        "since",
++        "until",
++        "by the time",
++        "at the time",
++        "how long",
++        "how many days",
++        "how many weeks",
++        "how many months",
++        "how many years",
++        "prior",
++        "previous",
++        "previously",
++        "earlier",
++        "later",
++        "then",
++        "date",
++        "time",
++        "moved",
++        "move",
++        "occurred",
++        "happened",
++        "started",
++        "ended",
++        "finished",
++        "began",
++    )
++
++    if _contains_temporal_phrase(q, earliest_terms):
++        return "asc"
++    if _contains_temporal_phrase(q, latest_terms):
++        return "desc"
++    if _contains_temporal_phrase(q, temporal_context_terms):
++        return "context"
++    return None
++
++
++def _apply_reference_date_temporal_rerank(query, memories, reference_date, explain=False):
++    """Apply conservative additive temporal scoring for temporal queries.
++
++    This does not hard-filter results. It adjusts each candidate's score using
++    the memory created_at timestamp, then sorts by the adjusted score. The goal is
++    to preserve semantic relevance while giving dated memories a small temporal
++    preference when the query has temporal intent.
++    """
++    if reference_date is None or not memories:
++        return memories
++
++    direction = _infer_temporal_rank_direction(query)
++    if direction is None:
++        return memories
++
++    reference_dt = _parse_temporal_datetime(reference_date)
++    dated = []
++    missing = []
++
++    for idx, item in enumerate(memories):
++        created_at = item.get("created_at")
++        if created_at is None and isinstance(item.get("metadata"), dict):
++            created_at = item["metadata"].get("created_at") or item["metadata"].get("timestamp")
++        created_dt = _parse_temporal_datetime(created_at)
++
++        if created_dt is None:
++            missing.append((idx, item))
++        else:
++            dated.append((idx, created_dt, item))
++
++    if not dated:
++        return memories
++
++    boosts = {}
++    # Keep temporal scoring as a small additive bias so semantic relevance remains dominant.
++    weight = 0.05 if direction in ("asc", "desc") else 0.025
++
++    if direction == "desc":
++        if reference_dt is not None:
++            before_or_equal = [(idx, dt, item) for idx, dt, item in dated if dt <= reference_dt]
++            after = [(idx, dt, item) for idx, dt, item in dated if dt > reference_dt]
++            before_or_equal.sort(key=lambda row: row[1], reverse=True)
++            after.sort(key=lambda row: row[1])
++            ranked = before_or_equal + after
++            preferred_count = max(len(before_or_equal), 1)
++            for rank, (idx, dt, item) in enumerate(ranked):
++                if dt <= reference_dt:
++                    boosts[idx] = weight * (preferred_count - min(rank, preferred_count - 1)) / preferred_count
++                else:
++                    boosts[idx] = -weight / 2
++        else:
++            ranked = sorted(dated, key=lambda row: row[1], reverse=True)
++            total = len(ranked)
++            for rank, (idx, dt, item) in enumerate(ranked):
++                boosts[idx] = weight * (total - rank) / total
++
++    elif direction == "asc":
++        ranked = sorted(dated, key=lambda row: row[1])
++        total = len(ranked)
++        for rank, (idx, dt, item) in enumerate(ranked):
++            boosts[idx] = weight * (total - rank) / total
++
++    else:
++        for idx, dt, item in dated:
++            if reference_dt is None or dt <= reference_dt:
++                boosts[idx] = weight
++            else:
++                boosts[idx] = -weight / 2
++
++    adjusted = []
++    for idx, item in enumerate(memories):
++        try:
++            base_score = float(item.get("score", 0) or 0)
++        except (TypeError, ValueError):
++            base_score = 0.0
++
++        temporal_score = boosts.get(idx, 0.0)
++        adjusted_score = base_score + temporal_score
++        item["score"] = adjusted_score
++
++        if explain:
++            item.setdefault("score_details", {})
++            item["score_details"]["temporal_rerank"] = {
++                "direction": direction,
++                "reference_date": reference_date,
++                "created_at": (
++                    (item.get("metadata") or {}).get("created_at")
++                    or (item.get("metadata") or {}).get("timestamp")
++                    or item.get("created_at")
++                    or item.get("timestamp")
++                ),
++                "base_score": base_score,
++                "temporal_score": temporal_score,
++                "adjusted_score": adjusted_score,
++            }
++
++        adjusted.append(item)
++
++    adjusted.sort(key=lambda item: item.get("score", 0), reverse=True)
++    return adjusted
++
++
++def _normalize_expiration_date(value: Any) -> Optional[str]:
++    if value is None:
++        return None
++    if isinstance(value, datetime):
++        return value.date().isoformat()
++    if isinstance(value, date):
++        return value.isoformat()
++    if isinstance(value, str):
++        try:
++            return date.fromisoformat(value).isoformat()
++        except ValueError as exc:
++            raise ValueError("expiration_date must be a valid date in YYYY-MM-DD format.") from exc
++    raise ValueError("expiration_date must be a date string in YYYY-MM-DD format.")
++
++
++def _payload_is_expired(payload: Optional[Dict[str, Any]]) -> bool:
++    if not payload:
++        return False
++    expiration_date = payload.get("expiration_date")
++    if not expiration_date:
++        return False
++    try:
++        return date.fromisoformat(str(expiration_date)) < datetime.now(timezone.utc).date()
++    except ValueError:
++        return False
++
++
+ setup_config()
+ logger = logging.getLogger(__name__)
+ 
+@@ -578,6 +908,8 @@ class Memory(MemoryBase):
+         agent_id: Optional[str] = None,
+         run_id: Optional[str] = None,
+         metadata: Optional[Dict[str, Any]] = None,
++        timestamp: Optional[Any] = None,
++        expiration_date: Optional[Any] = None,
+         infer: bool = True,
+         memory_type: Optional[str] = None,
+         prompt: Optional[str] = None,
+@@ -595,6 +927,9 @@ class Memory(MemoryBase):
+             agent_id (str, optional): ID of the agent creating the memory. Defaults to None.
+             run_id (str, optional): ID of the run creating the memory. Defaults to None.
+             metadata (dict, optional): Metadata to store with the memory. Defaults to None.
++            timestamp (Any, optional): Observation timestamp for the input messages. Used to ground relative temporal references and stored as memory creation time.
++            expiration_date (Any, optional): Date in YYYY-MM-DD format. Expired memories are hidden
++                from search and get_all unless show_expired is True.
+             infer (bool, optional): If True (default), an LLM is used to extract key facts from
+                 'messages' and decide whether to add, update, or delete related memories.
+                 If False, 'messages' are added as raw memories directly.
+@@ -617,6 +952,9 @@ class Memory(MemoryBase):
+             LLMError: If LLM operations fail.
+             DatabaseError: If database operations fail.
+         """
++        normalized_timestamp = _normalize_iso_timestamp_to_utc(str(timestamp)) if timestamp is not None else None
++        normalized_expiration_date = _normalize_expiration_date(expiration_date)
++        temporal_usage_notice = detect_temporal_usage_from_metadata(metadata)
+ 
+         processed_metadata, effective_filters = _build_filters_and_metadata(
+             user_id=user_id,
+@@ -624,6 +962,11 @@ class Memory(MemoryBase):
+             run_id=run_id,
+             input_metadata=metadata,
+         )
++        if normalized_timestamp is not None:
++            processed_metadata["created_at"] = normalized_timestamp
++            processed_metadata["timestamp"] = normalized_timestamp
++        if normalized_expiration_date is not None:
++            processed_metadata["expiration_date"] = normalized_expiration_date
+ 
+         if memory_type is not None and memory_type != MemoryType.PROCEDURAL.value:
+             raise Mem0ValidationError(
+@@ -656,10 +999,24 @@ class Memory(MemoryBase):
+         else:
+             messages = parse_vision_messages(messages)
+ 
+-        vector_store_result = self._add_to_vector_store(messages, processed_metadata, effective_filters, infer, prompt=prompt)
++        vector_store_result = self._add_to_vector_store(
++            messages,
++            processed_metadata,
++            effective_filters,
++            infer,
++            prompt=prompt,
++            timestamp=normalized_timestamp,
++        )
++        scale_threshold_notice = detect_scale_threshold_from_add_result(self, vector_store_result)
++        if temporal_usage_notice:
++            display_temporal_usage_notice(self, "sync", "add", *temporal_usage_notice)
++        elif scale_threshold_notice:
++            display_scale_threshold_notice(self, "sync", "add", *scale_threshold_notice)
++        else:
++            display_first_run_notice(self, "sync", "add")
+         return {"results": vector_store_result}
+ 
+-    def _add_to_vector_store(self, messages, metadata, filters, infer, prompt=None):
++    def _add_to_vector_store(self, messages, metadata, filters, infer, prompt=None, timestamp=None):
+         if not infer:
+             returned_memories = []
+             for message_dict in messages:
+@@ -732,9 +1089,10 @@ class Memory(MemoryBase):
+             existing_memories=existing_memories,
+             new_messages=parsed_messages,
+             last_k_messages=last_messages,
++            current_date=datetime.now(timezone.utc).date().isoformat(),
++            timestamp=timestamp or metadata.get("created_at"),
+             custom_instructions=custom_instr,
+         )
+-
+         try:
+             response = self.llm.generate_response(
+                 messages=[
+@@ -1125,12 +1483,15 @@ class Memory(MemoryBase):
+ 
+     def search(
+         self,
+-        query: str,
++        query,
+         *,
+         top_k: int = 20,
+         filters: Optional[Dict[str, Any]] = None,
+         threshold: float = 0.1,
+         rerank: bool = False,
++        explain: bool = False,
++        reference_date: Optional[Any] = None,
++        show_expired: bool = False,
+         **kwargs,
+     ):
+         """
+@@ -1161,6 +1522,9 @@ class Memory(MemoryBase):
+                 - {"NOT": [filter1]} - logical NOT
+             threshold (float, optional): Minimum score for a memory to be included. Defaults to 0.1.
+             rerank (bool, optional): Whether to rerank results. Defaults to False.
++            explain (bool, optional): Whether to include score_details for each result. Defaults to False.
++            reference_date (Any, optional): Reference date for temporal search and recency-aware reranking.
++            show_expired (bool, optional): Include expired memories. Defaults to False.
+ 
+         Returns:
+             dict: A dictionary containing the search results under a "results" key.
+@@ -1170,6 +1534,10 @@ class Memory(MemoryBase):
+             ValueError: If filters doesn't contain at least one of user_id, agent_id, run_id,
+                 or if threshold/top_k values are invalid.
+         """
++        normalized_reference_date = (
++            _normalize_iso_timestamp_to_utc(str(reference_date)) if reference_date is not None else None
++        )
++
+         # Reject top-level entity params - must use filters instead
+         _reject_top_level_entity_params(kwargs, "search")
+ 
+@@ -1226,6 +1594,11 @@ class Memory(MemoryBase):
+ 
+         original_memories = self._search_vector_store(query, effective_filters, limit, threshold)
+ 
++        if normalized_reference_date is not None and os.getenv("MEM0_DISABLE_TEMPORAL_RERANK") != "1":
++            original_memories = _apply_reference_date_temporal_rerank(
++                query, original_memories, normalized_reference_date, explain=explain
++            )
++
+         # Apply reranking if enabled and reranker is available
+         if rerank and self.reranker and original_memories:
+             try:
+@@ -1340,8 +1713,16 @@ class Memory(MemoryBase):
+                 return True
+         return False
+ 
+-    def _search_vector_store(self, query, filters, limit, threshold=0.1):
+-        # Guard against None threshold (backward compat)
++    def _search_vector_store(
++        self,
++        query,
++        filters,
++        limit,
++        threshold,
++        reference_date=None,
++        show_expired=False,
++        explain=False,
++    ):
+         if threshold is None:
+             threshold = 0.1
+ 
+@@ -2008,10 +2389,11 @@ class AsyncMemory(MemoryBase):
+         agent_id: Optional[str] = None,
+         run_id: Optional[str] = None,
+         metadata: Optional[Dict[str, Any]] = None,
++        timestamp: Optional[Any] = None,
++        expiration_date: Optional[Any] = None,
+         infer: bool = True,
+         memory_type: Optional[str] = None,
+         prompt: Optional[str] = None,
+-        llm=None,
+     ):
+         """
+         Create a new memory asynchronously.
+@@ -2022,6 +2404,9 @@ class AsyncMemory(MemoryBase):
+             agent_id (str, optional): ID of the agent creating the memory. Defaults to None.
+             run_id (str, optional): ID of the run creating the memory. Defaults to None.
+             metadata (dict, optional): Metadata to store with the memory. Defaults to None.
++            timestamp (Any, optional): Observation timestamp for the input messages. Used to ground relative temporal references and stored as memory creation time.
++            expiration_date (Any, optional): Date in YYYY-MM-DD format. Expired memories are hidden
++                from search and get_all unless show_expired is True.
+             infer (bool, optional): Whether to infer the memories. Defaults to True.
+             memory_type (str, optional): Type of memory to create. Defaults to None.
+                                          Pass "procedural_memory" to create procedural memories.
+@@ -2030,9 +2415,18 @@ class AsyncMemory(MemoryBase):
+         Returns:
+             dict: A dictionary containing the result of the memory addition operation.
+         """
++        normalized_timestamp = _normalize_iso_timestamp_to_utc(str(timestamp)) if timestamp is not None else None
++
++        normalized_expiration_date = _normalize_expiration_date(expiration_date)
++        temporal_usage_notice = detect_temporal_usage_from_metadata(metadata)
+         processed_metadata, effective_filters = _build_filters_and_metadata(
+             user_id=user_id, agent_id=agent_id, run_id=run_id, input_metadata=metadata
+         )
++        if normalized_timestamp is not None:
++            processed_metadata["created_at"] = normalized_timestamp
++            processed_metadata["timestamp"] = normalized_timestamp
++        if normalized_expiration_date is not None:
++            processed_metadata["expiration_date"] = normalized_expiration_date
+ 
+         if memory_type is not None and memory_type != MemoryType.PROCEDURAL.value:
+             raise ValueError(
+@@ -2064,7 +2458,21 @@ class AsyncMemory(MemoryBase):
+         else:
+             messages = parse_vision_messages(messages)
+ 
+-        vector_store_result = await self._add_to_vector_store(messages, processed_metadata, effective_filters, infer, prompt=prompt)
++        vector_store_result = await self._add_to_vector_store(
++            messages,
++            processed_metadata,
++            effective_filters,
++            infer,
++            prompt=prompt,
++            timestamp=normalized_timestamp,
++        )
++        scale_threshold_notice = await asyncio.to_thread(detect_scale_threshold_from_add_result, self, vector_store_result)
++        if temporal_usage_notice:
++            await display_temporal_usage_notice_async(self, "async", "add", *temporal_usage_notice)
++        elif scale_threshold_notice:
++            await display_scale_threshold_notice_async(self, "async", "add", *scale_threshold_notice)
++        else:
++            await display_first_run_notice_async(self, "async", "add")
+         return {"results": vector_store_result}
+ 
+     async def _add_to_vector_store(
+@@ -2074,6 +2482,7 @@ class AsyncMemory(MemoryBase):
+         effective_filters: dict,
+         infer: bool,
+         prompt: Optional[str] = None,
++        timestamp: Optional[Any] = None,
+     ):
+         if not infer:
+             returned_memories = []
+@@ -2148,6 +2557,8 @@ class AsyncMemory(MemoryBase):
+             existing_memories=existing_memories,
+             new_messages=parsed_messages,
+             last_k_messages=last_messages,
++            current_date=datetime.now(timezone.utc).date().isoformat(),
++            timestamp=timestamp or metadata.get("created_at"),
+             custom_instructions=custom_instr,
+         )
+ 
+@@ -2540,12 +2951,15 @@ class AsyncMemory(MemoryBase):
+ 
+     async def search(
+         self,
+-        query: str,
++        query,
+         *,
+         top_k: int = 20,
+         filters: Optional[Dict[str, Any]] = None,
+         threshold: float = 0.1,
+         rerank: bool = False,
++        explain: bool = False,
++        reference_date: Optional[Any] = None,
++        show_expired: bool = False,
+         **kwargs,
+     ):
+         """
+@@ -2576,6 +2990,9 @@ class AsyncMemory(MemoryBase):
+                 - {"NOT": [filter1]} - logical NOT
+             threshold (float, optional): Minimum score for a memory to be included. Defaults to 0.1.
+             rerank (bool, optional): Whether to rerank results. Defaults to False.
++            explain (bool, optional): Whether to include score_details for each result. Defaults to False.
++            reference_date (Any, optional): Reference date for temporal search and recency-aware reranking.
++            show_expired (bool, optional): Include expired memories. Defaults to False.
+ 
+         Returns:
+             dict: A dictionary containing the search results under a "results" key.
+@@ -2585,6 +3002,10 @@ class AsyncMemory(MemoryBase):
+             ValueError: If filters doesn't contain at least one of user_id, agent_id, run_id,
+                 or if threshold/top_k values are invalid.
+         """
++        normalized_reference_date = (
++            _normalize_iso_timestamp_to_utc(str(reference_date)) if reference_date is not None else None
++        )
++
+         # Reject top-level entity params - must use filters instead
+         _reject_top_level_entity_params(kwargs, "search")
+ 
+@@ -2643,6 +3064,11 @@ class AsyncMemory(MemoryBase):
+ 
+         original_memories = await self._search_vector_store(query, effective_filters, limit, threshold)
+ 
++        if normalized_reference_date is not None and os.getenv("MEM0_DISABLE_TEMPORAL_RERANK") != "1":
++            original_memories = _apply_reference_date_temporal_rerank(
++                query, original_memories, normalized_reference_date, explain=explain
++            )
++
+         # Apply reranking if enabled and reranker is available
+         if rerank and self.reranker and original_memories:
+             try:
+@@ -2760,7 +3186,16 @@ class AsyncMemory(MemoryBase):
+                 return True
+         return False
+ 
+-    async def _search_vector_store(self, query, filters, limit, threshold=0.1):
++    async def _search_vector_store(
++        self,
++        query,
++        filters,
++        limit,
++        threshold,
++        reference_date=None,
++        show_expired=False,
++        explain=False,
++    ):
+         if threshold is None:
+             threshold = 0.1
+ 

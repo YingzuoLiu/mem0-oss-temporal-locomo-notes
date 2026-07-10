@@ -1,0 +1,26 @@
+From 7dbd00d8c6b8b2afd77c1459d988b5ae796b345c Mon Sep 17 00:00:00 2001
+From: YingzuoLiu <yingzuoliu@gmail.com>
+Date: Wed, 8 Jul 2026 20:45:44 +0800
+Subject: [PATCH 04/10] Make temporal score adjustment conservative
+
+---
+ mem0/memory/main.py | 3 ++-
+ 1 file changed, 2 insertions(+), 1 deletion(-)
+
+diff --git a/mem0/memory/main.py b/mem0/memory/main.py
+index 49c6268c..6589d9e3 100644
+--- a/mem0/memory/main.py
++++ b/mem0/memory/main.py
+@@ -496,7 +496,8 @@ def _apply_reference_date_temporal_rerank(query, memories, reference_date, expla
+         return memories
+ 
+     boosts = {}
+-    weight = 0.15 if direction in ("asc", "desc") else 0.08
++    # Keep temporal scoring as a small additive bias so semantic relevance remains dominant.
++    weight = 0.05 if direction in ("asc", "desc") else 0.025
+ 
+     if direction == "desc":
+         if reference_dt is not None:
+-- 
+2.47.1.windows.1
+

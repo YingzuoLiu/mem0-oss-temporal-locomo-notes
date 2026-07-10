@@ -1,0 +1,63 @@
+From b0930d24f1f38af5bbaebcb8b81204ddaa77bd33 Mon Sep 17 00:00:00 2001
+From: YingzuoLiu <yingzuoliu@gmail.com>
+Date: Fri, 10 Jul 2026 14:52:43 +0800
+Subject: [PATCH 10/10] Add v2.0.2 OSS notice fallbacks
+
+---
+ mem0/memory/main.py | 40 ++++++++++++++++++++++++++++++++++++++++
+ 1 file changed, 40 insertions(+)
+
+diff --git a/mem0/memory/main.py b/mem0/memory/main.py
+index 0a533acc..b1e87ece 100644
+--- a/mem0/memory/main.py
++++ b/mem0/memory/main.py
+@@ -239,6 +239,46 @@ def detect_temporal_usage_from_metadata(metadata):
+     return None
+ 
+ 
++
++# ---------------------------------------------------------------------------
++# v2.0.2 temporal backport notice fallbacks
++# ---------------------------------------------------------------------------
++
++def detect_scale_threshold_from_add_result(*args, **kwargs):
++    """No-op fallback for newer OSS notice helper absent in v2.0.2."""
++    return None
++
++
++def display_scale_threshold_notice(*args, **kwargs):
++    """No-op fallback for newer OSS notice helper absent in v2.0.2."""
++    return None
++
++
++async def display_scale_threshold_notice_async(*args, **kwargs):
++    """No-op fallback for newer OSS notice helper absent in v2.0.2."""
++    return None
++
++
++def display_first_run_notice(*args, **kwargs):
++    """No-op fallback for newer OSS notice helper absent in v2.0.2."""
++    return None
++
++
++async def display_first_run_notice_async(*args, **kwargs):
++    """No-op fallback for newer OSS notice helper absent in v2.0.2."""
++    return None
++
++
++def display_temporal_usage_notice(*args, **kwargs):
++    """No-op fallback for newer OSS notice helper absent in v2.0.2."""
++    return None
++
++
++async def display_temporal_usage_notice_async(*args, **kwargs):
++    """No-op fallback for newer OSS notice helper absent in v2.0.2."""
++    return None
++
++
+ def _normalize_iso_timestamp_to_utc(timestamp: Optional[Any]) -> Optional[str]:
+     """Normalize ISO-like or Unix epoch timestamps to UTC ISO strings when possible.
+ 
+-- 
+2.47.1.windows.1
+
